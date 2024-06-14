@@ -1,0 +1,12 @@
+﻿name: aciminimal
+services:
+  web-service:
+    image: aciminimal:latest
+    build:
+      context: .
+      tags:
+      - ops5containers.azurecr.io/dev/aciminimal
+    container_name: web-service
+    restart: always
+    ports:
+      - "80:8080"
