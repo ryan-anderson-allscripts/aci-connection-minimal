@@ -1,0 +1,47 @@
+name: Build docker image for Windows Server 2022
+on:
+  workflow_dispatch:
+    inputs:
+      image-name: 
+        description: Image name
+        type: string
+        default: aci-min-win22
+      image-tag: 
+        description: Image tag
+        type: string
+        default: latest
+      acr-name:
+        description: Name of the Azure container registry to push to
+        type: string
+        default: ops5containers
+
+env:
+  acr-server: '${{ inputs.acr-name }}.azurecr.io'
+  full-image-name: '${{ env.acr-server }}/%{{ image-name }}:${{ image-tag }}'
+  
+jobs:
+
+  build:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Login to azure
+      uses: azure/login@v2.1.1
+      with:
+        creds: '${{ secrets.DEPLOY_SP }}'
+        enable-AzPSSession: true
+  
+    - name: Build the Docker image
+      run: docker build . --file Dockerfile --tag ${{ image-name }}:$(Get-Date -f yyyyMMdd) --tag ${{ full-image-name }}
+
+    - name: Push to ACR
+      uses: azure/powershell@v1
+      with:
+        inlineScript: |
+          az acr login --name ${{ inputs.acr-name }}
+          docker push ${{ full-image-name }}
+        azPSVersion: latest
+
