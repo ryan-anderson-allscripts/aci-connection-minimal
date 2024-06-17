@@ -14,6 +14,16 @@ param acrGroup string = 'op5-container-rg'
 @description('Container image to deploy. Should be of the form repoName/imagename:tag for images stored in public Docker Hub, or a fully qualified URI for other registries. Images from private registries require additional registry credentials.')
 param imageName string = 'dev/aciminimal'
 
+@description('Image tag. Defaults to "latest"')
+param imageTag string = 'latest'
+
+@description('ACI os type. Defaults to Windows')
+@allowed([
+  'Windows'
+  'Linux'
+])
+param osType string = 'Windows'
+
 @description('Name of the application key vault')
 param appVaultName string = 'op5-0-aks-kv'
 
@@ -107,7 +117,7 @@ resource containerGroup 'Microsoft.ContainerInstance/containerGroups@2023-05-01'
       {
         name: containerName
         properties: {
-          image: '${acrServer}/${imageName}'
+          image: '${acrServer}/${imageName}:${imageTag}'
           ports: [
             {
               port: port
@@ -125,7 +135,7 @@ resource containerGroup 'Microsoft.ContainerInstance/containerGroups@2023-05-01'
         }
       }
     ]
-    osType: 'Windows'
+    osType: osType
     restartPolicy: restartPolicy
   }
 }
