@@ -17,13 +17,14 @@ on:
 
 env:
   acr-server: '${{ inputs.acr-name }}.azurecr.io'
-  full-image-name: '${{ env.acr-server }}/%{{ image-name }}:${{ image-tag }}'
   
 jobs:
 
   build:
 
     runs-on: windows-latest
+    env:
+      full-image-name: '${{ env.acr-server }}/%{{ image-name }}:${{ image-tag }}'
 
     steps:
     - uses: actions/checkout@v4
