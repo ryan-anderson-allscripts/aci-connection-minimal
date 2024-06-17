@@ -27,7 +27,7 @@ jobs:
     
     - name: set full-image-name
       run: |
-        "full-image-name='${{ env.acr-server }}/%{{ image-name }}:${{ image-tag }}'" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "full-image-name='${{ env.acr-server }}/%{{ inputs.image-name }}:${{ inputs.image-tag }}'" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
     - name: Login to azure
       uses: azure/login@v2.1.1
