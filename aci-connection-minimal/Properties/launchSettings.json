@@ -4,7 +4,9 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "VaultUri": "https://op5-0-aks-kv.vault.azure.net/",
+        "AZURE_USERNAME": "Ryan.Anderson@allscripts.com"
       },
       "dotnetRunMessages": true,
       "applicationUrl": "http://localhost:5125"
@@ -13,7 +15,9 @@
       "commandName": "IISExpress",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "VaultUri": "https://op5-0-aks-kv.vault.azure.net/",
+        "AZURE_USERNAME": "Ryan.Anderson@allscripts.com"
       }
     },
     "Container (Dockerfile)": {
@@ -21,7 +25,9 @@
       "launchBrowser": true,
       "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
       "environmentVariables": {
-        "ASPNETCORE_HTTP_PORTS": "8080"
+        "ASPNETCORE_HTTP_PORTS": "8080",
+        "VaultUri": "https://op5-0-aks-kv.vault.azure.net/",
+        "AZURE_USERNAME": "Ryan.Anderson@allscripts.com"
       },
       "publishAllPorts": true
     }

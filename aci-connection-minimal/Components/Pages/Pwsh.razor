@@ -1,0 +1,131 @@
+﻿@page "/pwsh"
+@using System.Management.Automation
+@using System.Management.Automation.Remoting
+@using System.Management.Automation.Runspaces
+@using System.Text
+@using System.Collections
+@inject ILogger<Pwsh> _logger
+<PageTitle>PowerShell Test</PageTitle>
+<h3>PowerShell Test</h3>
+@if (envVars.Any())
+{
+    <h3>Env Vars</h3>
+    <ul>
+    @foreach (var kv in envVars)
+    {
+        <li>@kv.Key = "@kv.Value"</li>
+    }
+    </ul>
+}
+@if (resultStrings.Any())
+{
+    <pre>
+        <h3>Messages</h3>
+        @foreach (var r in resultStrings)
+        {
+            @($"{r}\n")
+        }
+    </pre>
+}
+@code {
+    List<string> resultStrings = new();
+    Dictionary<string, string> envVars = new();
+    Action<PowerShell> action = (ps) =>
+    {
+        ps.AddCommand("Get-ChildItem").AddParameter("Path", "env:");
+    };
+    protected override async Task OnInitializedAsync()
+    {
+        _logger.LogDebug("Executing script locally");
+        try
+        {
+            // using (Runspace rs = RunspaceFactory.CreateOutOfProcessRunspace(new TypeTable([])))
+            // {
+            // rs.Open();
+            _logger.LogTrace("Creating PowerShell session");
+            // using (PowerShell psSession = PowerShell.Create(rs))
+            using (PowerShell psSession = PowerShell.Create())
+            {
+                _logger.LogDebug("Session created - version {v}", psSession.Runspace.Version);
+                resultStrings.Clear();
+                resultStrings = await DoCommand(psSession, action);
+            }
+
+            // rs.Close(); // ensure runspace is closed
+            // }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception executing local command");
+            resultStrings.Add(string.Format("Exception [{0}]: {1}", ex.GetType().FullName, ex.Message));
+        }
+
+    }
+    private async Task<List<string>> DoCommand(PowerShell powerShell, Action<PowerShell> action)
+    {
+        List<string> result = new List<string>();
+        PSDataCollection<PSObject> psResult;
+        try
+        {
+            _logger.LogTrace("Handing off to delegate for custom actions");
+            action(powerShell);
+            _logger.LogTrace("Returned from delegate");
+
+            _logger.LogTrace("Final Script:");
+            _logger.LogTrace(GetScript(powerShell.Commands));
+
+            _logger.LogTrace("Invoking command");
+            psResult = await powerShell.InvokeAsync();
+
+            _logger.LogTrace("Result count: {count}", psResult.Count);
+
+            result.Clear();
+
+            if (powerShell.Streams.Error.Count > 0)
+            {
+                _logger.LogError("Errors in script execution");
+                result.Add("*** ERRORS IN POWERSHELL SCRIPT ***");
+                foreach (ErrorRecord err in powerShell.Streams.Error)
+                {
+                    _logger.LogError(err.Exception, "Exception details");
+                    result.Add(err.Exception.Message);
+                }
+            }
+            else
+            {
+                _logger.LogDebug("Script execution successful");
+                foreach (PSObject obj in psResult)
+                {
+                    result.Add(obj.ToString());
+                    DictionaryEntry entry = (DictionaryEntry)obj.BaseObject;
+                    envVars.Add(entry.Key.ToString(), entry.Value.ToString());
+                }
+                // envVars = psResult.Cast<KeyValuePair<string, string>>().ToDictionary();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception [{exType}]", ex.GetType().FullName);
+            result.Add(string.Format("Exception [{0}]: {1}", ex.GetType().FullName, ex.Message));
+        }
+        return result;
+
+    }
+    public string GetScript(PSCommand cmd)
+    {
+        StringBuilder sb = new StringBuilder();
+        foreach (var c in cmd.Commands)
+        {
+            sb.Append(c.CommandText);
+            if (c.Parameters.Any())
+            {
+                foreach (var p in c.Parameters)
+                {
+                    sb.Append($" -{p.Name} \"{p.Value.ToString()}\"");
+                }
+            }
+            sb.AppendLine("");
+        }
+        return sb.ToString();
+    }
+}

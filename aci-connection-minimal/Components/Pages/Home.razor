@@ -1,42 +1,92 @@
 ﻿@page "/"
 @using AciConnectionMinimal.Options
+@using AciConnectionMinimal.Services
 @using Azure.Identity
 @using Azure.ResourceManager
 @using Azure.ResourceManager.KeyVault
 @using Azure.ResourceManager.Resources
+@using Azure.Security.KeyVault.Secrets
 @using Microsoft.Extensions.Options
 @using System.Text
-@inject IOptionsMonitor<VaultOptions> _options;
+@inject IOptionsMonitor<VaultOptions> _options
 @inject ILogger<Home> _logger
+@inject IConfiguration _config
+@inject AzureRestService _restSvc
 <PageTitle>ACI Vault Configuration Minimal Reproduction</PageTitle>
+<style type="text/css">
+    table { width: 100%; }
+    th { 
+        text-align: right;
+    }
+    td { 
+        width: 50%; 
+        vertical-align: top;
+    }
+
+    table.banded tr:nth-child(even) {
+        background-color: #f2f2f2;
+    }
+</style>
 
 <h1>ACI Vault Configuration Minimal Reproduction</h1>
 <p>If all is working, a list of secret names from key vault @_options.CurrentValue.VaultName should display below</p>
-<div style="font-weight: bold;">Secret Names</div>
-<ol>
-    @foreach (var s in SecretNames)
-    {
-        <li>@s</li>
-    }
-</ol>
+<table>
+    <tr>
+        <td width="50%">
+            <div style="font-weight: bold;">Secret Names</div>
+            <ol>
+                @foreach (var s in SecretNames)
+                {
+                    <li>@s</li>
+                }
+            </ol>
+        </td>
+        <td width="50%" rowspan="2">
+            <div style="font-weight: bold;">Configuration Values</div>
+            <table class="banded">
+                @foreach (var c in ConfigValues)
+                {
+                    <tr>
+                        <th>@c.Key</th>
+                        <td>@c.Value</td>
+                    </tr>
+                }
+            </table>
+        </td>
+    </tr>
+    <tr>
+        <td>
+            <div style="font-weight: bold;">Message Log</div>
+            <div>
+                @foreach (var m in Messages)
+                {
+                    <pre>@m</pre>
+                }
+            </div>
+        </td>
+    </tr>
+</table>
 
-<div style="font-weight: bold;">Message Log</div>
-<div>
-@foreach (var m in Messages)
-{
-    <pre>@m</pre>
-}
-</div>
+
 
 @code {
     List<string> SecretNames = new();
     List<string> Messages = new();
+    Dictionary<string, string?> ConfigValues = new();
 
     protected override void OnInitialized()
     {
         _logger.LogInformation("Home.razor initializing");
+        GetConfigValues();
         GetSecretNames();
         _logger.LogInformation("Home.razor initialization complete");
+    }
+
+    private void GetConfigValues()
+    {
+        ConfigValues = _config.AsEnumerable()
+            .OrderBy(kv => kv.Key)
+            .ToDictionary();
     }
 
     private void GetSecretNames()
@@ -46,31 +96,39 @@
         try {
             Messages.Clear();
             Messages.Add("Attempting to connect to Azure managed identity");
+            
             _logger.LogInformation("Attempting to connect to Azure tenant {tenant} with managed id {client}", 
                     _options.CurrentValue.TenantId, 
-                    _options.CurrentValue.ManagedIdentityId);
+                    _options.CurrentValue.MSIClientId);
+            var msiRid = new Azure.Core.ResourceIdentifier(_options.CurrentValue.MSIResourceID);
+            
+            _logger.LogInformation("Resource ID: {resId}", msiRid.ToString());
             var credentialOpts = new DefaultAzureCredentialOptions()
             {
-                ManagedIdentityClientId = _options.CurrentValue.ManagedIdentityId,
+                //ManagedIdentityResourceId = msiRid,
+                ManagedIdentityClientId = _options.CurrentValue.MSIClientId,
                 TenantId = _options.CurrentValue.TenantId
             };
+            var credential = new DefaultAzureCredential(credentialOpts);
+           
+            var secretClient = new SecretClient(vaultUri: _options.CurrentValue.VaultUri, credential: credential);
+           
+            // var secretClient = new SecretClient(vaultUri: _options.CurrentValue.VaultUri, credential: new RestTokenCredential(_options.CurrentValue));
+            // var secretClient = new SecretClient(vaultUri: _options.CurrentValue.VaultUri, credential: _restSvc.CurrentCredential);
 
-            ArmClient client = new ArmClient(new DefaultAzureCredential(credentialOpts));
-            _logger.LogInformation("[ArmClient] created");
-
-            var rid = KeyVaultResource.CreateResourceIdentifier(_options.CurrentValue.SubscriptionId, 
-                                                                _options.CurrentValue.VaultRg, 
-                                                                _options.CurrentValue.VaultName);
-            var vault = client.GetKeyVaultResource(rid);
-            _logger.LogInformation("KeyVault {rid} retrieved", rid);
-
-            if (vault is null)
+            if (secretClient is null)
             {
                 _logger.LogError("Key vault {vaultName} not found", _options.CurrentValue.VaultName);
                 Messages.Add(string.Format("Key vault {0} not found", _options.CurrentValue.VaultName));
                 return;
             }
-            var secrets = vault.GetKeyVaultSecrets().Select(s => s.Data.Name).ToList();
+            _logger.LogDebug("Retrieving secrets from {vault}", _options.CurrentValue.VaultName);
+            var secrets = secretClient.GetPropertiesOfSecrets()
+                .Select(s => {
+                    _logger.LogDebug("Selecting {name}", s.Name);
+                    return s.Name;
+                }).ToList();
+
             SecretNames.Clear();
             SecretNames.AddRange(secrets);
             _logger.LogInformation("Retrieved {count} secret names from vault", SecretNames.Count);

@@ -17,13 +17,6 @@ param imageName string = 'dev/aciminimal'
 @description('Image tag. Defaults to "latest"')
 param imageTag string = 'latest'
 
-@description('ACI os type. Defaults to Windows')
-@allowed([
-  'Windows'
-  'Linux'
-])
-param osType string = 'Windows'
-
 @description('Name of the application key vault')
 param appVaultName string = 'op5-0-aks-kv'
 
@@ -43,23 +36,16 @@ param memoryInGb int = 2
 param vnetName string = 'xys-1-vnet'
 
 @description('The subnet on the virtual network')
-param subnetName string = 'xys-1-appsvc-snet'
+param subnetName string = 'xys-1-pri-snet'
 
 @description('The resource group for the virtual network')
 param vnetGroup string = 'xys-0-net-rg'
 
-@description('The behavior of Azure runtime if container has stopped.')
-@allowed([
-  'Always'
-  'Never'
-  'OnFailure'
-])
-param restartPolicy string = 'Never'
-
 // =========== VARIABLES ===========
 var acrServer = '${acrName}.azurecr.io'
-var appName = '${appPrefix}-ci'
-var containerName = '${appPrefix}-container'
+var appName = '${appPrefix}-ca'
+var containerAppEnvName = '${appPrefix}-env'
+var containerAppLogAnalyticsName = '${appPrefix}-logs'
 var managedIdentityName = '${appPrefix}-mi'
 var vaultSecretUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var subnetRID = resourceId(vnetGroup, 'Microsoft.Network/virtualNetworks/subnets', vnetName, subnetName)
@@ -71,15 +57,6 @@ resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2018-
   name: managedIdentityName
   location: location
 }
-
-// resource vNet 'Microsoft.Network/virtualNetworks@2023-11-01' existing = {
-//   name: vnetName
-//   scope: resourceGroup(vnetGroup)
-// }
-// resource subnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = {
-//     name:subnetName
-//     parent: vNet
-// }
 
 // assign Key Vault Secrets Reader to MI
 module vaultSecrets './modules/assign-vault-role.bicep' = {
@@ -102,29 +79,49 @@ module acrPull './modules/assign-acrpull-role.bicep' = {
   }
 }
 
-resource publicIp 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
-  name: '${appName}-pi'
-  location: location
-  sku: { 
-    name: 'Standard' 
-    tier: 'Regional'
-  }
-  properties: {
-    publicIPAllocationMethod: 'Static'
-    ddosSettings: {
-      protectionMode: 'VirtualNetworkInherited'
-    }
-  }
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-06-01' existing = {
+  name: containerAppLogAnalyticsName
+}
+// resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-06-01' = {
+//   name: containerAppLogAnalyticsName
+//   location: location
+//   properties: {
+//     sku: {
+//       name: 'PerGB2018'
+//     }
+//     retentionInDays: 30
+//   }
+// }
+
+resource containerAppEnv 'Microsoft.App/managedEnvironments@2022-06-01-preview' existing = {
+  name: containerAppEnvName
 }
 
-// create container group
-resource containerGroup 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
+// resource containerAppEnv 'Microsoft.App/managedEnvironments@2022-06-01-preview' = {
+//   name: containerAppEnvName
+//   location: location
+//   sku: {
+//     name: 'Consumption'
+//   }
+//   properties: {
+//     appLogsConfiguration: {
+//       destination: 'log-analytics'
+//       logAnalyticsConfiguration: {
+//         customerId: logAnalytics.properties.customerId
+//         sharedKey: logAnalytics.listKeys().primarySharedKey
+//       }
+//     }
+//     vnetConfiguration: {
+//       infrastructureSubnetId: subnetRID
+//     }
+//   }
+//   dependsOn: [logAnalytics]
+// }
+
+
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
-  dependsOn: [
-    vaultSecrets
-    acrPull
-  ]
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -132,42 +129,77 @@ resource containerGroup 'Microsoft.ContainerInstance/containerGroups@2023-05-01'
     }
   }
   properties: {
-    imageRegistryCredentials: [
-      {
-        server: acrServer
-        identity: managedIdentity.id
+    managedEnvironmentId: containerAppEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: ports[1]
+        allowInsecure: false
+        traffic: [
+          {
+            latestRevision: true
+            weight: 100
+          }
+        ]
       }
-    ]
-    ipAddress: {
-        type: 'Private'
-        // type: 'Public'
-        ports: [for port in ports: {
-          port: port
-          protocol: 'TCP'
-        }]
+      registries: [
+        {
+          server: acrServer
+          identity: managedIdentity.id
+        }
+      ]
+      // secrets: [
+      //   {
+      //     name: 'scm-service'
+      //     keyVaultUrl: '${vaultUrl}/secrets/PSCMServices'
+      //     identity: managedIdentity.id
+      //   }
+      //   {
+      //     name: 'scm-app-pool'
+      //     keyVaultUrl: '${vaultUrl}/secrets/PSCMAppPools'
+      //     identity: managedIdentity.id
+      //   }
+      // ]
     }
-    containers: [
-      {
-        name: containerName
-        properties: {
+    template: {
+      containers: [
+        {
+          name: '${appName}-ctr'
           image: '${acrServer}/${imageName}:${imageTag}'
-          ports: [for port in ports: {
-            port: port
-            protocol: 'TCP'
-          }]
-          environmentVariables: [
-          ]
           resources: {
-            requests: {
-              cpu: cpuCores
-              memoryInGB: memoryInGb
+            cpu: cpuCores
+            memory: '${memoryInGb}Gi'
+          }
+          // volumeMounts: [
+          //   {
+          //     volumeName: 'secret-vol'
+          //     mountPath: '/app/secrets'
+          //   }
+          // ]
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 1
+        rules: [
+          {
+            name: 'http-rule'
+            http: {
+              metadata: {
+                concurrentRequests: '100'
+              }
             }
           }
-        }
+        ]
       }
-    ]
-    osType: osType
-    subnetIds: [ { id: subnetRID } ]
-    restartPolicy: restartPolicy
+      // volumes: [
+      //   {
+      //     name: 'secret-vol'
+      //     storageType: 'Secret'
+      //   }
+      // ]
+    }
   }
+  dependsOn: [logAnalytics, containerAppEnv]
 }
+
